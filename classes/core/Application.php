@@ -24,6 +24,7 @@ use APP\press\Press;
 use APP\press\PressDAO;
 use APP\publicationFormat\PublicationFormatDAO;
 use PKP\core\PKPApplication;
+use PKP\core\Registry;
 use PKP\db\DAORegistry;
 use PKP\facades\Locale;
 use PKP\submission\RepresentationDAOInterface;
@@ -251,5 +252,32 @@ class Application extends PKPApplication
     public static function getSectionIdPropName(): string
     {
         return 'seriesId';
+    }
+
+    /**
+     * KB: use APP\core\Dispatcher, which redirects frontend 404s to the
+     * general "not found" page (pages/notfound).
+     *
+     * Same as PKPApplication::getDispatcher(), except for the dispatcher class.
+     *
+     * @return Dispatcher
+     */
+    public function getDispatcher()
+    {
+        $dispatcher = & Registry::get('dispatcher', true, null); // Ref req'd
+        if (is_null($dispatcher)) {
+            // Implicitly set dispatcher by ref in the registry
+            $dispatcher = new Dispatcher();
+
+            // Inject dependency
+            $dispatcher->setApplication(PKPApplication::get());
+
+            // Inject router configuration
+            $dispatcher->addRouterName('\PKP\core\APIRouter', self::ROUTE_API);
+            $dispatcher->addRouterName('\PKP\core\PKPComponentRouter', self::ROUTE_COMPONENT);
+            $dispatcher->addRouterName('\APP\core\PageRouter', self::ROUTE_PAGE);
+        }
+
+        return $dispatcher;
     }
 }
