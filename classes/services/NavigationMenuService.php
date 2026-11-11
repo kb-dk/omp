@@ -152,13 +152,17 @@ class NavigationMenuService extends \PKP\services\PKPNavigationMenuService
             $relatedObject = null;
 
             switch ($menuItemType) {
+                // The related object id is stored in the item's path. Only look it up when
+                // the path is a positive integer: an empty, NULL or non-numeric path (e.g.
+                // left behind when editing an item) would otherwise throw a TypeError on
+                // every page of the press. Such items are hidden below instead.
                 case self::NMI_TYPE_SERIES:
-                    $seriesId = $navigationMenuItem->getPath();
+                    $seriesId = $this->getRelatedObjectId($navigationMenuItem);
                     $relatedObject = $seriesId ? Repo::section()->get($seriesId, $contextId) : null;
                     break;
                 case self::NMI_TYPE_CATEGORY:
-                    $categoryId = $navigationMenuItem->getPath();
-                    $relatedObject = Repo::category()->get($categoryId);
+                    $categoryId = $this->getRelatedObjectId($navigationMenuItem);
+                    $relatedObject = $categoryId ? Repo::category()->get($categoryId) : null;
                     if ($relatedObject && $relatedObject->getContextId() != $contextId) {
                         $relatedObject = null;
                     }
@@ -217,6 +221,17 @@ class NavigationMenuService extends \PKP\services\PKPNavigationMenuService
                     break;
             }
         }
+    }
+
+    /**
+     * Get the id of the series/category a menu item points to, stored in its path.
+     *
+     * @return ?int The id, or null when the path is not a positive integer
+     */
+    protected function getRelatedObjectId(\PKP\navigationMenu\NavigationMenuItem $navigationMenuItem): ?int
+    {
+        $path = (string) $navigationMenuItem->getPath();
+        return ctype_digit($path) && (int) $path > 0 ? (int) $path : null;
     }
 }
 
