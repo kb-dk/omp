@@ -1,0 +1,18 @@
+# Settings appended to <solr install>/bin/solr.in.sh on the OMP server.
+# Solr runs standalone, outside the OMP directory.
+#
+# Install (as the omp user):
+#   tar -xzf solr-9.11.0.tgz -C /home/omp && ln -s /home/omp/solr-9.11.0 /home/omp/solr
+#   mkdir -p /home/omp/solr-data/logs && cp /home/omp/solr/server/solr/solr.xml /home/omp/solr-data/
+#   (append the lines below to /home/omp/solr/bin/solr.in.sh)
+#   /home/omp/solr/bin/solr start
+#   plugins/generic/RDLSolrSearch/solr/deploy.sh
+
+SOLR_HOME=/home/omp/solr-data
+SOLR_LOGS_DIR=/home/omp/solr-data/logs
+SOLR_PID_DIR=/home/omp/solr-data
+SOLR_PORT=8983
+# Listen on localhost only: Solr has no authentication configured.
+SOLR_JETTY_HOST=127.0.0.1
+SOLR_HEAP=512m
+# No Solr modules needed: RDLSolrSearch extracts text from PDFs in PHP.
