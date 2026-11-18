@@ -12,9 +12,46 @@ core `omp`.
 - Phase 1: plugin skeleton, site-wide settings, Solr client and a
   connection test.
 - Phase 2: OMP schema and Solr config (`solr/conf/`) and a deploy script.
+- Phase 3: metadata indexing, removal on unpublish/delete, full rebuild.
 
-Indexing and search are not wired up yet, so OMP's own search is still
-used.
+Search is not wired up yet, so OMP's own search is still used.
+
+## Indexing
+
+The plugin keeps Solr in sync through OMP hooks:
+
+| OMP event | Solr |
+|---|---|
+| Monograph published, metadata changed (OMP search jobs) | Document added/replaced |
+| Version unpublished | Reindexed if an older version is still published, otherwise removed |
+| Submission deleted | Removed |
+| `php tools/rebuildSearchIndex.php` | Full rebuild (see below) |
+
+Only public monographs are indexed: the submission and its current
+publication must be published and the press must be enabled. Only
+approved publication formats contribute ISBNs and DOIs. Author
+biographies are not indexed.
+
+OMP keeps maintaining its own database index too, so its built-in search
+remains available as a fallback. Indexing errors never block publishing;
+they are written to the PHP error log (prefix `RDLSolrSearch:`) and are
+repaired by a rebuild.
+
+### Rebuild
+
+```sh
+php tools/rebuildSearchIndex.php              # Solr now, then OMP's own index (via queued jobs)
+php tools/rebuildSearchIndex.php -solr-only   # Solr only
+php tools/rebuildSearchIndex.php <press path> # Solr only, one press
+```
+
+The Solr rebuild runs immediately (it does not use the job queue), indexes
+all public monographs and removes documents that should no longer be in
+the index.
+
+Changes that do not go through OMP's search jobs are picked up by the next
+rebuild, e.g. renaming a series, disabling a press or approving a
+publication format.
 
 ## Settings
 
@@ -72,7 +109,7 @@ One document per published monograph.
 | `authors`, `chapter_authors` | Names (not language specific) |
 | `<name>_<locale>` | Localized metadata, e.g. `title_da`, `abstract_en`, `chapter_title_da` |
 | `<name>_ft_<locale>` | Full text of book files; searchable, not stored |
-| `<name>_txt` | Text in a locale without its own analyzer |
+| `<name>_txt`, `<name>_ft_txt` | Metadata / full text in a locale without its own analyzer |
 | `title_sort` | Lowercased title for sorting |
 
 Locale suffixes are OMP 3.4 locale codes (`da`, `en`, `fr_CA`, ...).

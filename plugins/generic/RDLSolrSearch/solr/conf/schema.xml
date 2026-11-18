@@ -89,6 +89,7 @@
     <dynamicField name="*_ft_ru" type="text_ru" indexed="true" stored="false" multiValued="true"/>
     <dynamicField name="*_ft_tr" type="text_tr" indexed="true" stored="false" multiValued="true"/>
     <dynamicField name="*_txt" type="text" indexed="true" stored="true" multiValued="true"/>
+    <dynamicField name="*_ft_txt" type="text" indexed="true" stored="false" multiValued="true"/>
     <dynamicField name="*_spell" type="text_spell" indexed="true" stored="false" multiValued="true"/>
 
     <!-- Drop anything else (e.g. a locale without a field definition) instead of failing the update. -->

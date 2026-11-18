@@ -18,12 +18,18 @@
 namespace APP\plugins\generic\RDLSolrSearch;
 
 use APP\core\Application;
+use APP\facades\Repo;
 use APP\plugins\generic\RDLSolrSearch\classes\form\SettingsForm;
+use APP\plugins\generic\RDLSolrSearch\classes\MonographDocumentBuilder;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrClient;
+use APP\plugins\generic\RDLSolrSearch\classes\SolrException;
+use APP\plugins\generic\RDLSolrSearch\classes\SolrIndexer;
 use PKP\core\JSONMessage;
 use PKP\linkAction\LinkAction;
 use PKP\linkAction\request\AjaxModal;
 use PKP\plugins\GenericPlugin;
+use PKP\plugins\Hook;
+use Throwable;
 
 class RDLSolrSearchPlugin extends GenericPlugin
 {
@@ -44,10 +50,112 @@ class RDLSolrSearchPlugin extends GenericPlugin
         if (Application::isUnderMaintenance()) {
             return $success;
         }
-        if ($success && $this->getEnabled($mainContextId)) {
-            // Indexing and search hooks are added in later phases.
+        // Site plugin: getEnabled() without a context reads the site-wide setting.
+        if ($success && $this->getEnabled()) {
+            // Indexing. OMP keeps updating its own database index as well
+            // (the callbacks never abort), so its search remains a fallback.
+            Hook::add('MonographSearchIndex::monographMetadataChanged', [$this, 'callbackMetadataChanged']);
+            Hook::add('Publication::unpublish', [$this, 'callbackUnpublish']);
+            Hook::add('Submission::delete', [$this, 'callbackSubmissionDeleted']);
+            Hook::add('MonographSearchIndex::rebuildIndex', [$this, 'callbackRebuildIndex']);
         }
         return $success;
+    }
+
+    public function getIndexer(): SolrIndexer
+    {
+        return new SolrIndexer($this->getSolrClient(), new MonographDocumentBuilder());
+    }
+
+    /**
+     * OMP (re)indexes a monograph, e.g. after publishing or a metadata change.
+     * Called for unpublished submissions too; the indexer removes those.
+     *
+     * @param array{0: Submission} $args
+     */
+    public function callbackMetadataChanged(string $hookName, array $args): bool
+    {
+        [$submission] = $args;
+        try {
+            $this->getIndexer()->indexSubmission($submission);
+        } catch (Throwable $e) {
+            $this->logIndexingError('index submission ' . $submission->getId(), $e);
+        }
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * A version was unpublished. The submission may still have an older
+     * published version, so reindex rather than just delete.
+     *
+     * @param array{0: Publication, 1: Publication, 2: Submission} $args
+     */
+    public function callbackUnpublish(string $hookName, array $args): bool
+    {
+        $submissionId = (int) $args[2]->getId();
+        try {
+            $submission = Repo::submission()->get($submissionId);
+            $submission
+                ? $this->getIndexer()->indexSubmission($submission)
+                : $this->getIndexer()->deleteSubmission($submissionId);
+        } catch (Throwable $e) {
+            $this->logIndexingError('update unpublished submission ' . $submissionId, $e);
+        }
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * @param array{0: Submission} $args
+     */
+    public function callbackSubmissionDeleted(string $hookName, array $args): bool
+    {
+        [$submission] = $args;
+        try {
+            $this->getIndexer()->deleteSubmission((int) $submission->getId());
+        } catch (Throwable $e) {
+            $this->logIndexingError('remove deleted submission ' . $submission->getId(), $e);
+        }
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * php tools/rebuildSearchIndex.php [-solr-only] [press path]
+     *
+     * Rebuilds the Solr index right away. Afterwards OMP rebuilds its own
+     * database index too, unless -solr-only is given or a press is given
+     * (OMP's database index cannot be rebuilt per press).
+     *
+     * @param array{0: bool, 1: ?Press, 2: string[]} $args
+     */
+    public function callbackRebuildIndex(string $hookName, array $args): bool
+    {
+        [$log, $press, $switches] = $args;
+        $echo = fn (string $message) => $log ? print($message . "\n") : null;
+        $solrOnly = in_array('-solr-only', (array) $switches, true);
+
+        $echo('Rebuilding the Solr index (core "' . $this->getSolrCore() . '")');
+        try {
+            $this->getIndexer()->rebuild($press, $echo);
+        } catch (Throwable $e) {
+            $this->logIndexingError('rebuild the index', $e);
+            $echo('Solr rebuild FAILED: ' . $e->getMessage());
+        }
+
+        if ($press || $solrOnly) {
+            return Hook::ABORT;
+        }
+        $echo('Rebuilding OMP\'s own search index');
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * Indexing errors must never break publishing; they are logged and the
+     * index can be repaired with a rebuild.
+     */
+    private function logIndexingError(string $action, Throwable $e): void
+    {
+        error_log('RDLSolrSearch: could not ' . $action . ': ' . $e->getMessage()
+            . ($e instanceof SolrException ? '' : "\n" . $e->getTraceAsString()));
     }
 
     /**

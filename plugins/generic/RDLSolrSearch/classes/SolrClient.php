@@ -128,6 +128,71 @@ class SolrClient
     }
 
     /**
+     * Add or replace documents. Changes become visible within $commitWithinMs.
+     *
+     * @param array[] $documents
+     *
+     * @throws SolrException
+     */
+    public function addDocuments(array $documents, int $commitWithinMs = 5000): void
+    {
+        if (!$documents) {
+            return;
+        }
+        $this->coreRequest('POST', 'update', ['commitWithin' => $commitWithinMs], array_values($documents));
+    }
+
+    /**
+     * @param string[] $ids
+     *
+     * @throws SolrException
+     */
+    public function deleteByIds(array $ids, int $commitWithinMs = 5000): void
+    {
+        if (!$ids) {
+            return;
+        }
+        $this->coreRequest('POST', 'update', ['commitWithin' => $commitWithinMs], ['delete' => array_values($ids)]);
+    }
+
+    /**
+     * Make all pending changes visible now.
+     *
+     * @throws SolrException
+     */
+    public function commit(): void
+    {
+        $this->coreRequest('POST', 'update', ['commit' => 'true'], []);
+    }
+
+    /**
+     * Get the ids of all documents, optionally restricted by a filter query.
+     * Uses cursor paging so it works for any index size.
+     *
+     * @return string[]
+     *
+     * @throws SolrException
+     */
+    public function getAllIds(?string $filterQuery = null, int $pageSize = 1000): array
+    {
+        $ids = [];
+        $cursor = '*';
+        do {
+            $params = ['q' => '*:*', 'fl' => 'id', 'rows' => $pageSize, 'sort' => 'id asc', 'cursorMark' => $cursor];
+            if ($filterQuery !== null) {
+                $params['fq'] = $filterQuery;
+            }
+            $data = $this->coreRequest('GET', 'select', $params);
+            foreach ($data['response']['docs'] ?? [] as $doc) {
+                $ids[] = (string) $doc['id'];
+            }
+            $previous = $cursor;
+            $cursor = $data['nextCursorMark'] ?? $previous;
+        } while ($cursor !== $previous);
+        return $ids;
+    }
+
+    /**
      * Run all checks and report the outcome without throwing.
      *
      * @return array{ok: bool, error: ?string, solrVersion: ?string, numDocs: ?int}
