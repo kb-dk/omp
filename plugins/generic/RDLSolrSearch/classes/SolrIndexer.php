@@ -24,6 +24,9 @@ class SolrIndexer
     /** Number of documents sent to Solr per request during a rebuild */
     private const BATCH_SIZE = 50;
 
+    /** A batch is also sent once its documents hold this much text (bytes) */
+    private const BATCH_BYTES = 8000000;
+
     private SolrClient $solr;
     private MonographDocumentBuilder $builder;
 
@@ -64,14 +67,14 @@ class SolrIndexer
      *
      * @param ?callable $log Receives progress messages
      *
-     * @return array{indexed: int, removed: int, failed: int}
+     * @return array{indexed: int, withFullText: int, removed: int, failed: int}
      *
      * @throws SolrException
      */
     public function rebuild(?Context $press = null, ?callable $log = null): array
     {
         $log ??= fn (string $message) => null;
-        $stats = ['indexed' => 0, 'removed' => 0, 'failed' => 0];
+        $stats = ['indexed' => 0, 'withFullText' => 0, 'removed' => 0, 'failed' => 0];
 
         $presses = $press
             ? [$press]
@@ -87,6 +90,7 @@ class SolrIndexer
                 ->getMany();
 
             $batch = [];
+            $batchBytes = 0;
             foreach ($submissions as $submission) {
                 try {
                     $doc = $this->builder->build($submission);
@@ -100,11 +104,16 @@ class SolrIndexer
                     continue;
                 }
                 $batch[] = $doc;
+                $batchBytes += $this->textBytes($doc);
+                if (preg_grep('/_ft_/', array_keys($doc))) {
+                    $stats['withFullText']++;
+                }
                 $indexedIds[$doc['id']] = true;
-                if (count($batch) >= self::BATCH_SIZE) {
+                if (count($batch) >= self::BATCH_SIZE || $batchBytes >= self::BATCH_BYTES) {
                     $this->solr->addDocuments($batch, 60000);
                     $stats['indexed'] += count($batch);
                     $batch = [];
+                    $batchBytes = 0;
                 }
             }
             $this->solr->addDocuments($batch, 60000);
@@ -123,7 +132,19 @@ class SolrIndexer
         $stats['removed'] = count($stale);
 
         $this->solr->commit();
-        $log('Solr index: ' . $stats['indexed'] . ' indexed, ' . $stats['removed'] . ' removed, ' . $stats['failed'] . ' failed');
+        $log('Solr index: ' . $stats['indexed'] . ' indexed (' . $stats['withFullText'] . ' with full text), ' . $stats['removed'] . ' removed, ' . $stats['failed'] . ' failed');
         return $stats;
+    }
+
+    /**
+     * Approximate size of a document's text.
+     */
+    private function textBytes(array $doc): int
+    {
+        $bytes = 0;
+        array_walk_recursive($doc, function ($value) use (&$bytes) {
+            $bytes += is_string($value) ? strlen($value) : 8;
+        });
+        return $bytes;
     }
 }

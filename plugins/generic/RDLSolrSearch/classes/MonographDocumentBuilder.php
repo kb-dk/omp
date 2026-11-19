@@ -31,6 +31,14 @@ class MonographDocumentBuilder
     /** @var array<int, ?Context> Press cache, by id */
     private array $presses = [];
 
+    /** Full text of public book files; null indexes metadata only. */
+    private ?FullTextProvider $fullText;
+
+    public function __construct(?FullTextProvider $fullText = null)
+    {
+        $this->fullText = $fullText;
+    }
+
     /**
      * Whether the monograph may appear in public search results.
      */
@@ -105,8 +113,31 @@ class MonographDocumentBuilder
         $this->addSeries($doc, $publication);
         $this->addChapters($doc, $publication);
         $this->addIdentifiers($doc, $publication);
+        $this->addFullText($doc, $submission, $publication);
 
         return $doc;
+    }
+
+    /**
+     * Full text of the open-access files, searchable but not stored.
+     */
+    private function addFullText(array &$doc, Submission $submission, Publication $publication): void
+    {
+        foreach ($this->getFullTexts($submission, $publication) as ['locale' => $textLocale, 'text' => $text]) {
+            $doc[LocaleFields::fullTextField(SolrSearcher::FULL_TEXT_FIELD, $textLocale)][] = $text;
+        }
+    }
+
+    /**
+     * @return array<int, array{locale: string, text: string}>
+     */
+    protected function getFullTexts(Submission $submission, Publication $publication): array
+    {
+        $press = $this->getPress((int) $submission->getData('contextId'));
+        if (!$this->fullText || !$press) {
+            return [];
+        }
+        return $this->fullText->getTexts($submission, $publication, $press);
     }
 
     private function addAuthors(array &$doc, Publication $publication, string $locale): void
@@ -181,8 +212,8 @@ class MonographDocumentBuilder
     }
 
     /**
-     * ISBNs and DOIs. Only approved publication formats are used, so
-     * identifiers of formats that are not public yet stay out of the index.
+     * ISBNs and DOIs. Only public (approved and available) publication
+     * formats are used, so identifiers not shown on the book page stay out.
      */
     private function addIdentifiers(array &$doc, Publication $publication): void
     {
@@ -190,7 +221,7 @@ class MonographDocumentBuilder
             $doc['doi'][] = $publication->getDoi();
         }
         foreach ($publication->getData('publicationFormats') ?? [] as $format) {
-            if (!$format->getIsApproved()) {
+            if (!FullTextProvider::isPublicFormat($format)) {
                 continue;
             }
             foreach ($format->getIdentificationCodes()->toArray() as $code) {

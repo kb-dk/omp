@@ -14,6 +14,7 @@ core `omp`.
 - Phase 2: OMP schema and Solr config (`solr/conf/`) and a deploy script.
 - Phase 3: metadata indexing, removal on unpublish/delete, full rebuild.
 - Phase 4: OMP's search uses Solr, with OMP's own search as fallback.
+- Phase 5: full text of open-access book files.
 
 ## Search
 
@@ -27,7 +28,7 @@ Solr:
 - Searched: titles, subtitles, keywords, subjects, disciplines, chapter
   titles/subtitles/abstracts, series titles, abstracts, coverage, type,
   affiliations, authors and chapter authors, ISBN and DOI (with or without
-  hyphens), and full text (phase 5). Title matches count most.
+  hyphens), and full text. Title matches count most; full text least.
 - Locales searched: those of the press (site-wide: of all enabled presses).
 - A press's search only finds that press's monographs.
 - Sorting by relevance, title, first author, publication date and press
@@ -53,12 +54,42 @@ The plugin keeps Solr in sync through OMP hooks:
 | Monograph published, metadata changed (OMP search jobs) | Document added/replaced |
 | Version unpublished | Reindexed if an older version is still published, otherwise removed |
 | Submission deleted | Removed |
+| Proof file uploaded, edited, deleted; format approved, made available, removed (published books) | OMP search job queued, which reindexes the book |
 | `php tools/rebuildSearchIndex.php` | Full rebuild (see below) |
 
 Only public monographs are indexed: the submission and its current
-publication must be published and the press must be enabled. Only
-approved publication formats contribute ISBNs and DOIs. Author
-biographies are not indexed.
+publication must be published and the press must be enabled. Only public
+(approved and available) publication formats contribute ISBNs and DOIs.
+Author biographies are not indexed.
+
+### Full text
+
+Full text comes only from files an anonymous visitor can download for free
+(the same checks as the book's download page):
+
+- a proof file of a publication format of the current, published publication,
+- the format is approved and available and not a remote URL,
+- the file is open access (price `0`),
+- the press does not require a login to read monographs.
+
+Files for sale, unapproved/unavailable formats, other file stages and
+dependent files are never read. Note that OMP's own database index does
+include all proof files.
+
+| Type | Extraction |
+|---|---|
+| PDF | `pdftotext` (`/usr/bin/pdftotext`, max 120 s per file) |
+| EPUB | (X)HTML chapters, in PHP |
+| HTML, XML, plain text | In PHP |
+
+Other types (e.g. Word) are skipped. At most 2 million characters per file
+and 5 million per book are indexed. Full text is searchable but not stored
+in Solr. A scanned PDF without a text layer adds no text.
+
+Extracted text is cached gzipped in OMP's files directory under
+`rdlSolrSearch/fulltext/`, by file id. Stored files never change (a new
+revision gets a new id), so reindexing does not run `pdftotext` again. The
+cache can be deleted at any time; it is rebuilt as needed.
 
 OMP keeps maintaining its own database index too, so its built-in search
 remains available as a fallback. Indexing errors never block publishing;
@@ -67,19 +98,23 @@ repaired by a rebuild.
 
 ### Rebuild
 
+Run it as the web server user, so it can read the book files and the
+full-text cache stays writable for OMP's background jobs:
+
 ```sh
-php tools/rebuildSearchIndex.php              # Solr now, then OMP's own index (via queued jobs)
-php tools/rebuildSearchIndex.php -solr-only   # Solr only
-php tools/rebuildSearchIndex.php <press path> # Solr only, one press
+sudo -u www-data php tools/rebuildSearchIndex.php              # Solr now, then OMP's own index (via queued jobs)
+sudo -u www-data php tools/rebuildSearchIndex.php -solr-only   # Solr only
+sudo -u www-data php tools/rebuildSearchIndex.php <press path> # Solr only, one press
 ```
 
 The Solr rebuild runs immediately (it does not use the job queue), indexes
 all public monographs and removes documents that should no longer be in
-the index.
+the index. The first rebuild with full text runs `pdftotext` on every
+open-access file and takes longer; later rebuilds use the cache.
 
-Changes that do not go through OMP's search jobs are picked up by the next
-rebuild, e.g. renaming a series, disabling a press or approving a
-publication format.
+Changes that do not go through OMP's search jobs or the event log are
+picked up by the next rebuild, e.g. renaming a series or disabling a
+press.
 
 ## Settings
 
@@ -136,7 +171,7 @@ One document per published monograph.
 | `isbn`, `doi` | Identifiers, matched without hyphens and case-insensitively |
 | `authors`, `chapter_authors` | Names (not language specific) |
 | `<name>_<locale>` | Localized metadata, e.g. `title_da`, `abstract_en`, `chapter_title_da` |
-| `<name>_ft_<locale>` | Full text of book files; searchable, not stored |
+| `fulltext_ft_<locale>` | Full text of open-access book files (file locale, else the book's); searchable, not stored |
 | `<name>_txt`, `<name>_ft_txt` | Metadata / full text in a locale without its own analyzer |
 | `title_sort` | Lowercased title (without prefix) for sorting |
 | `authors_sort` | First author, lowercased "family, given", for sorting |

@@ -27,7 +27,7 @@ class SolrSearcher
     /** Longest query passed to Solr, in characters */
     public const MAX_QUERY_LENGTH = 500;
 
-    /** Field used for full text (phase 5) */
+    /** Field used for full text: fulltext_ft_<locale> */
     public const FULL_TEXT_FIELD = 'fulltext';
 
     /**

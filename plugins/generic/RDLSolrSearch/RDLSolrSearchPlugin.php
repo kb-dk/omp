@@ -19,7 +19,11 @@ namespace APP\plugins\generic\RDLSolrSearch;
 
 use APP\core\Application;
 use APP\facades\Repo;
+use APP\core\Services;
+use APP\log\event\SubmissionEventLogEntry;
 use APP\plugins\generic\RDLSolrSearch\classes\form\SettingsForm;
+use APP\plugins\generic\RDLSolrSearch\classes\FullTextExtractor;
+use APP\plugins\generic\RDLSolrSearch\classes\FullTextProvider;
 use APP\plugins\generic\RDLSolrSearch\classes\MonographDocumentBuilder;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrClient;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrException;
@@ -27,11 +31,16 @@ use APP\plugins\generic\RDLSolrSearch\classes\SolrIndexer;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrSearcher;
 use Illuminate\Support\Facades\Cache;
 use PKP\context\Context;
+use APP\submission\Submission;
 use PKP\core\JSONMessage;
+use PKP\core\PKPApplication;
+use PKP\jobs\submissions\UpdateSubmissionSearchJob;
+use PKP\log\event\EventLogEntry;
 use PKP\linkAction\LinkAction;
 use PKP\linkAction\request\AjaxModal;
 use PKP\plugins\GenericPlugin;
 use PKP\plugins\Hook;
+use PKP\submissionFile\SubmissionFile;
 use Throwable;
 
 class RDLSolrSearchPlugin extends GenericPlugin
@@ -44,7 +53,22 @@ class RDLSolrSearchPlugin extends GenericPlugin
     public const SEARCH_BACKOFF_SECONDS = 60;
     private const SEARCH_BACKOFF_KEY = 'rdlSolrSearch.searchUnavailable';
 
+    /** Event log entries that change a published book's public formats or files */
+    private const FORMAT_EVENTS = [
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_PUBLISH,
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_UNPUBLISH,
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_AVAILABLE,
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_UNAVAILABLE,
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_CREATE,
+        SubmissionEventLogEntry::SUBMISSION_LOG_PUBLICATION_FORMAT_REMOVE,
+    ];
+
+    public const PDFTOTEXT = '/usr/bin/pdftotext';
+
     private ?SolrClient $solrClient = null;
+
+    /** @var array<int, true> Submissions queued for reindexing in this request */
+    private array $queuedReindex = [];
 
     /**
      * @copydoc Plugin::register()
@@ -65,6 +89,8 @@ class RDLSolrSearchPlugin extends GenericPlugin
             Hook::add('Publication::unpublish', [$this, 'callbackUnpublish']);
             Hook::add('Submission::delete', [$this, 'callbackSubmissionDeleted']);
             Hook::add('MonographSearchIndex::rebuildIndex', [$this, 'callbackRebuildIndex']);
+            // OMP does not reindex when a published book's files or formats change.
+            Hook::add('EventLog::add', [$this, 'callbackEventLogged']);
 
             // Searching. Falls back to OMP's own search if Solr fails.
             Hook::add('SubmissionSearch::retrieveResults', [$this, 'callbackRetrieveResults']);
@@ -74,7 +100,50 @@ class RDLSolrSearchPlugin extends GenericPlugin
 
     public function getIndexer(): SolrIndexer
     {
-        return new SolrIndexer($this->getSolrClient(), new MonographDocumentBuilder());
+        $extractor = new FullTextExtractor(Services::get('file')->fs, self::PDFTOTEXT);
+        return new SolrIndexer($this->getSolrClient(), new MonographDocumentBuilder(new FullTextProvider($extractor)));
+    }
+
+    /**
+     * Files and publication formats are changed without a search job, but
+     * OMP logs every change after saving it. Queue OMP's search job for a
+     * published book whose proof files or formats changed, so its full text
+     * and identifiers are updated (in the background, not in this request).
+     *
+     * @param array{0: EventLogEntry} $args
+     */
+    public function callbackEventLogged(string $hookName, array $args): bool
+    {
+        [$entry] = $args;
+        try {
+            $submissionId = $this->getChangedSubmissionId($entry);
+            if (!$submissionId || isset($this->queuedReindex[$submissionId])) {
+                return Hook::CONTINUE;
+            }
+            $this->queuedReindex[$submissionId] = true;
+            $submission = Repo::submission()->get($submissionId);
+            if ($submission && $submission->getData('status') === Submission::STATUS_PUBLISHED) {
+                dispatch(new UpdateSubmissionSearchJob($submissionId));
+            }
+        } catch (Throwable $e) {
+            $this->logIndexingError('queue reindexing after a file/format change', $e);
+        }
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * The submission whose public files may have changed, or null.
+     */
+    public function getChangedSubmissionId(EventLogEntry $entry): ?int
+    {
+        if ((int) $entry->getData('fileStage') === SubmissionFile::SUBMISSION_FILE_PROOF && $entry->getData('submissionId')) {
+            return (int) $entry->getData('submissionId');
+        }
+        if ((int) $entry->getData('assocType') === PKPApplication::ASSOC_TYPE_SUBMISSION
+            && in_array((int) $entry->getData('eventType'), self::FORMAT_EVENTS, true)) {
+            return (int) $entry->getData('assocId');
+        }
+        return null;
     }
 
     /**
