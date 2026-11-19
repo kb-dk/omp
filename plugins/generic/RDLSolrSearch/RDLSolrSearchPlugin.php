@@ -98,10 +98,15 @@ class RDLSolrSearchPlugin extends GenericPlugin
         return $success;
     }
 
-    public function getIndexer(): SolrIndexer
+    public function getIndexer(?FullTextExtractor $extractor = null): SolrIndexer
     {
-        $extractor = new FullTextExtractor(Services::get('file')->fs, self::PDFTOTEXT);
+        $extractor ??= $this->getFullTextExtractor();
         return new SolrIndexer($this->getSolrClient(), new MonographDocumentBuilder(new FullTextProvider($extractor)));
+    }
+
+    public function getFullTextExtractor(): FullTextExtractor
+    {
+        return new FullTextExtractor(Services::get('file')->fs, self::PDFTOTEXT);
     }
 
     /**
@@ -213,11 +218,20 @@ class RDLSolrSearchPlugin extends GenericPlugin
         $solrOnly = in_array('-solr-only', (array) $switches, true);
 
         $echo('Rebuilding the Solr index (core "' . $this->getSolrCore() . '")');
+        // Missing files are reported once, as a count, instead of one log line each.
+        $extractor = $this->getFullTextExtractor();
+        $extractor->setLogMissingFiles(false);
         try {
-            $this->getIndexer()->rebuild($press, $echo);
+            $this->getIndexer($extractor)->rebuild($press, $echo);
         } catch (Throwable $e) {
             $this->logIndexingError('rebuild the index', $e);
             $echo('Solr rebuild FAILED: ' . $e->getMessage());
+        }
+        $missing = $extractor->getMissingFiles();
+        if ($missing) {
+            $message = count($missing) . ' book file(s) are missing from the files directory; no full text was indexed for them (e.g. "' . $missing[0] . '")';
+            $echo('Warning: ' . $message);
+            error_log('RDLSolrSearch: rebuild: ' . $message);
         }
 
         if ($press || $solrOnly) {

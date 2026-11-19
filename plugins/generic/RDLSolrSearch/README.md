@@ -82,7 +82,9 @@ include all proof files.
 | EPUB | (X)HTML chapters, in PHP |
 | HTML, XML, plain text | In PHP |
 
-Other types (e.g. Word) are skipped. At most 2 million characters per file
+Files missing from the files directory are skipped: background indexing
+logs each one, a rebuild prints one count at the end. Other types (e.g.
+Word) are skipped. At most 2 million characters per file
 and 5 million per book are indexed. Full text is searchable but not stored
 in Solr. A scanned PDF without a text layer adds no text.
 

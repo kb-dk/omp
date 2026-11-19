@@ -45,11 +45,30 @@ class FullTextExtractor
     private string $pdftotext;
     private bool $useCache;
 
+    /** Log each file that is missing from storage (off during a rebuild, which reports a count) */
+    private bool $logMissingFiles = true;
+
+    /** @var string[] Paths of files that were missing from storage */
+    private array $missingFiles = [];
+
     public function __construct(FilesystemOperator $fs, string $pdftotext = '/usr/bin/pdftotext', bool $useCache = true)
     {
         $this->fs = $fs;
         $this->pdftotext = $pdftotext;
         $this->useCache = $useCache;
+    }
+
+    public function setLogMissingFiles(bool $log): void
+    {
+        $this->logMissingFiles = $log;
+    }
+
+    /**
+     * @return string[] Paths of files that were missing from storage so far
+     */
+    public function getMissingFiles(): array
+    {
+        return array_keys(array_flip($this->missingFiles));
     }
 
     public static function isSupported(string $mimetype): bool
@@ -118,6 +137,13 @@ class FullTextExtractor
             return null;
         }
         try {
+            if (!$this->fs->fileExists($path)) {
+                $this->missingFiles[] = $path;
+                if ($this->logMissingFiles) {
+                    error_log('RDLSolrSearch: file "' . $path . '" is missing from the files directory; no full text indexed for it');
+                }
+                return null;
+            }
             $in = $this->fs->readStream($path);
             $out = fopen($tmp, 'wb');
             stream_copy_to_stream($in, $out);
