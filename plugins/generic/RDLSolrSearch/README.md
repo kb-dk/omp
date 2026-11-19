@@ -98,13 +98,16 @@ repaired by a rebuild.
 
 ### Rebuild
 
-Run it as the web server user, so it can read the book files and the
-full-text cache stays writable for OMP's background jobs:
+Run it as the user that runs OMP (the web server or PHP process), so it
+can read the book files and the full-text cache stays writable for OMP's
+background jobs. On a typical Apache server that is `www-data`
+(`sudo -u www-data php tools/...`); on a development machine running
+`php -S` it is your own user.
 
 ```sh
-sudo -u www-data php tools/rebuildSearchIndex.php              # Solr now, then OMP's own index (via queued jobs)
-sudo -u www-data php tools/rebuildSearchIndex.php -solr-only   # Solr only
-sudo -u www-data php tools/rebuildSearchIndex.php <press path> # Solr only, one press
+php tools/rebuildSearchIndex.php              # Solr now, then OMP's own index (via queued jobs)
+php tools/rebuildSearchIndex.php -solr-only   # Solr only
+php tools/rebuildSearchIndex.php <press path> # Solr only, one press
 ```
 
 The Solr rebuild runs immediately (it does not use the job queue), indexes
