@@ -29,9 +29,11 @@ use APP\plugins\generic\RDLSolrSearch\classes\SolrClient;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrException;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrIndexer;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrSearcher;
+use APP\plugins\generic\RDLSolrSearch\pages\SuggestHandler;
 use Illuminate\Support\Facades\Cache;
 use PKP\context\Context;
 use APP\submission\Submission;
+use APP\template\TemplateManager;
 use PKP\core\JSONMessage;
 use PKP\core\PKPApplication;
 use PKP\jobs\submissions\UpdateSubmissionSearchJob;
@@ -67,6 +69,13 @@ class RDLSolrSearchPlugin extends GenericPlugin
 
     private ?SolrClient $solrClient = null;
 
+    /** Facet filters: request parameter => SolrSearcher::FACET_FIELDS key */
+    public const FILTER_PARAMS = [
+        'searchPress' => 'press',
+        'searchSeries' => 'series',
+        'searchYear' => 'year',
+    ];
+
     /** @var array<int, true> Submissions queued for reindexing in this request */
     private array $queuedReindex = [];
 
@@ -94,6 +103,10 @@ class RDLSolrSearchPlugin extends GenericPlugin
 
             // Searching. Falls back to OMP's own search if Solr fails.
             Hook::add('SubmissionSearch::retrieveResults', [$this, 'callbackRetrieveResults']);
+
+            // Type-ahead suggestions: endpoint + script on public pages.
+            Hook::add('LoadHandler', [$this, 'callbackLoadHandler']);
+            Hook::add('TemplateManager::display', [$this, 'callbackAddSuggestAssets']);
         }
         return $success;
     }
@@ -257,6 +270,8 @@ class RDLSolrSearchPlugin extends GenericPlugin
             return Hook::CONTINUE;
         }
         try {
+            $request = $this->getCurrentRequest();
+            $filters = $this->getRequestedFilters($request, $context);
             $found = $this->getSearcher()->search(
                 (array) $keywords,
                 $context ? (int) $context->getId() : null,
@@ -267,7 +282,8 @@ class RDLSolrSearchPlugin extends GenericPlugin
                 (string) $orderDir,
                 (array) $exclude,
                 (int) $page,
-                (int) $itemsPerPage
+                (int) $itemsPerPage,
+                ['filters' => $filters, 'highlight' => true, 'facets' => true]
             );
         } catch (Throwable $e) {
             error_log('RDLSolrSearch: search failed, using OMP\'s own search for ' . self::SEARCH_BACKOFF_SECONDS . ' seconds: ' . $e->getMessage()
@@ -278,7 +294,165 @@ class RDLSolrSearchPlugin extends GenericPlugin
         // The array holds references to the caller's variables.
         $args[9] = $found['total'];
         $args[11] = $found['ids'];
+
+        // Snippets and facets for the theme's search page (frontend/pages/search.tpl).
+        try {
+            TemplateManager::getManager($request)->assign(
+                'rdlSolrSearch',
+                $this->getTemplateData($found, $filters, (string) $request->getUserVar('query'), $context === null)
+            );
+        } catch (Throwable $e) {
+            error_log('RDLSolrSearch: could not prepare snippets/facets: ' . $e->getMessage());
+        }
         return Hook::ABORT;
+    }
+
+    /**
+     * The request being served (separate method so tests can replace it).
+     */
+    protected function getCurrentRequest()
+    {
+        return Application::get()->getRequest();
+    }
+
+    /**
+     * Facet filters from the request (?searchYear=2020 ...). The press filter
+     * only applies to the site-wide search.
+     *
+     * @return array<string, int> By SolrSearcher::FACET_FIELDS key
+     */
+    public function getRequestedFilters($request, ?Context $context): array
+    {
+        $filters = [];
+        foreach (self::FILTER_PARAMS as $param => $name) {
+            $value = (int) $request->getUserVar($param);
+            if ($value > 0 && !($name === 'press' && $context)) {
+                $filters[$name] = $value;
+            }
+        }
+        return $filters;
+    }
+
+    /**
+     * Data for the search page:
+     *  highlights:    [submission id => [['type' => metadata|fulltext, 'html' => escaped HTML with <mark>]]]
+     *  facets:        [['name', 'title', 'values' => [['label', 'count', 'active', 'params']]]]
+     *  activeFilters: [['title', 'label', 'removeParams']]
+     *  filterParams:  request parameters of the active filters (for pagination links)
+     * "params" are complete request parameters for {url page="search" op="search" params=...}.
+     *
+     * @param array<string, int> $filters Active filters by FACET_FIELDS key
+     */
+    public function getTemplateData(array $found, array $filters, string $query, bool $siteWide): array
+    {
+        $paramOf = array_flip(self::FILTER_PARAMS);
+        $filterParams = [];
+        foreach ($filters as $name => $value) {
+            $filterParams[$paramOf[$name]] = $value;
+        }
+        $base = ['query' => $query];
+
+        $facets = [];
+        $activeFilters = [];
+        foreach ($found['facets'] ?? [] as $name => $counts) {
+            if ($name === 'press' && !$siteWide) {
+                continue;
+            }
+            $values = [];
+            foreach ($counts as $value => $count) {
+                $active = ($filters[$name] ?? null) === $value;
+                $params = $filterParams;
+                if ($active) {
+                    unset($params[$paramOf[$name]]);
+                } else {
+                    $params[$paramOf[$name]] = $value;
+                }
+                $label = $this->getFacetLabel($name, $value);
+                if ($label === null) {
+                    continue;
+                }
+                $values[] = ['label' => $label, 'count' => $count, 'active' => $active, 'params' => $base + $params];
+                if ($active) {
+                    $activeFilters[] = ['title' => __('plugins.generic.rdlSolrSearch.facet.' . $name), 'label' => $label, 'removeParams' => $base + $params];
+                }
+            }
+            // A facet with a single value does not help narrow the results.
+            if (count($values) > 1 || isset($filters[$name])) {
+                $facets[] = ['name' => $name, 'title' => __('plugins.generic.rdlSolrSearch.facet.' . $name), 'values' => $values];
+            }
+        }
+        return [
+            'highlights' => $found['highlights'] ?? [],
+            'facets' => $facets,
+            'activeFilters' => $activeFilters,
+            'filterParams' => $filterParams,
+        ];
+    }
+
+    /**
+     * Display name of a facet value, or null to leave the value out.
+     */
+    protected function getFacetLabel(string $facet, int $value): ?string
+    {
+        switch ($facet) {
+            case 'year':
+                return (string) $value;
+            case 'press':
+                $press = Application::getContextDAO()->getById($value);
+                return $press ? (string) $press->getLocalizedName() : null;
+            case 'series':
+                $series = Repo::section()->get($value);
+                return $series ? trim((string) $series->getLocalizedFullTitle()) : null;
+        }
+        return null;
+    }
+
+    /**
+     * index.php/<press|index>/rdlsolrsuggest?q=...
+     */
+    public function callbackLoadHandler(string $hookName, array $args): bool
+    {
+        $page = & $args[0];
+        $handler = & $args[3];
+        if ($page === 'rdlsolrsuggest') {
+            $handler = new SuggestHandler($this);
+            return Hook::ABORT;
+        }
+        return Hook::CONTINUE;
+    }
+
+    /**
+     * Add the type-ahead script and its settings to public (frontend) pages.
+     *
+     * @param array{0: TemplateManager, 1: string} $args
+     */
+    public function callbackAddSuggestAssets(string $hookName, array $args): bool
+    {
+        static $added = false;
+        if ($added) {
+            return Hook::CONTINUE;
+        }
+        $added = true;
+        try {
+            $templateMgr = $args[0];
+            $request = Application::get()->getRequest();
+            $base = $request->getBaseUrl() . '/' . $this->getPluginPath();
+            $config = [
+                'url' => $request->getDispatcher()->url($request, PKPApplication::ROUTE_PAGE, null, 'rdlsolrsuggest'),
+                'label' => __('plugins.generic.rdlSolrSearch.suggest.label'),
+                'minChars' => SolrSearcher::SUGGEST_MIN_CHARS,
+            ];
+            $templateMgr->addJavaScript(
+                'rdlSolrSuggestConfig',
+                'window.rdlSolrSuggest = ' . json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES) . ';',
+                ['inline' => true, 'contexts' => 'frontend']
+            );
+            $templateMgr->addJavaScript('rdlSolrSuggest', $base . '/js/suggest.js', ['contexts' => 'frontend']);
+            $templateMgr->addStyleSheet('rdlSolrSuggest', $base . '/css/suggest.css', ['contexts' => 'frontend']);
+        } catch (Throwable $e) {
+            error_log('RDLSolrSearch: could not add suggestion script: ' . $e->getMessage());
+        }
+        return Hook::CONTINUE;
     }
 
     public function getSearcher(): SolrSearcher

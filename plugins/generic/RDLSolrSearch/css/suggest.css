@@ -1,0 +1,46 @@
+/* Type-ahead list below OMP search boxes (js/suggest.js). */
+.rdl-solr-suggest-wrapper {
+	position: relative;
+}
+.rdl-solr-suggest {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	z-index: 1050;
+	margin: 2px 0 0;
+	padding: 0;
+	list-style: none;
+	max-height: 22rem;
+	overflow-y: auto;
+	background: #fff;
+	color: #212529;
+	border: 1px solid #ced4da;
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	text-align: left;
+}
+.rdl-solr-suggest[hidden] {
+	display: none;
+}
+.rdl-solr-suggest li {
+	padding: 0.5rem 0.75rem;
+	cursor: pointer;
+	border-bottom: 1px solid #f1f1f1;
+}
+.rdl-solr-suggest li:last-child {
+	border-bottom: 0;
+}
+.rdl-solr-suggest li[aria-selected="true"],
+.rdl-solr-suggest li:hover {
+	background: #e9f1fb;
+}
+.rdl-solr-suggest-title {
+	display: block;
+	font-weight: bold;
+}
+.rdl-solr-suggest-authors {
+	display: block;
+	font-size: 0.875em;
+	color: #595959;
+}

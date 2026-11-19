@@ -82,6 +82,23 @@ class SolrSearcher
         'pressTitle' => 'press_id',
     ];
 
+    /** Facets: request parameter => Solr field */
+    public const FACET_FIELDS = [
+        'press' => 'press_id',
+        'series' => 'series_id',
+        'year' => 'year',
+    ];
+
+    /** Snippet sources, in order of preference. Metadata first, then full text. */
+    private const SNIPPET_METADATA_FIELDS = ['abstract', 'chapter_abstract', 'chapter_title'];
+
+    /** Longest snippet shown, in characters */
+    public const MAX_SNIPPET_CHARS = 300;
+
+    /** Marks around highlighted words in Solr's answer; replaced by <mark> after escaping. */
+    private const MARK_START = "\u{2}";
+    private const MARK_END = "\u{3}";
+
     private SolrClient $solr;
 
     public function __construct(SolrClient $solr)
@@ -108,18 +125,24 @@ class SolrSearcher
         string $orderDir = 'desc',
         array $exclude = [],
         int $page = 1,
-        int $itemsPerPage = 20
+        int $itemsPerPage = 20,
+        array $options = []
     ): array {
-        $params = $this->buildParams($keywords, $pressId, $localeSuffixes, $publishedFrom, $publishedTo, $orderBy, $orderDir, $exclude, $page, $itemsPerPage);
+        $params = $this->buildParams($keywords, $pressId, $localeSuffixes, $publishedFrom, $publishedTo, $orderBy, $orderDir, $exclude, $page, $itemsPerPage, $options);
         if ($params === null) {
-            return ['ids' => [], 'total' => 0];
+            return ['ids' => [], 'total' => 0, 'highlights' => [], 'facets' => []];
         }
         $response = $this->solr->coreRequest('POST', 'search', [], ['params' => $params]);
         $ids = [];
         foreach ($response['response']['docs'] ?? [] as $doc) {
             $ids[] = (int) $doc['submission_id'];
         }
-        return ['ids' => $ids, 'total' => (int) ($response['response']['numFound'] ?? 0)];
+        return [
+            'ids' => $ids,
+            'total' => (int) ($response['response']['numFound'] ?? 0),
+            'highlights' => $this->parseHighlights($response['highlighting'] ?? []),
+            'facets' => $this->parseFacets($response['facet_counts']['facet_fields'] ?? []),
+        ];
     }
 
     /**
@@ -127,6 +150,10 @@ class SolrSearcher
      *
      * The first non-empty query (preferring "all fields") is the scored main
      * query; queries for other search types must also match (filters).
+     *
+     * @param array{filters?: array<string, int>, highlight?: bool, facets?: bool} $options
+     *  filters: facet filters by FACET_FIELDS key, e.g. ['year' => 2020];
+     *  highlight: return snippets; facets: return facet counts
      */
     public function buildParams(
         array $keywords,
@@ -138,7 +165,8 @@ class SolrSearcher
         string $orderDir = 'desc',
         array $exclude = [],
         int $page = 1,
-        int $itemsPerPage = 20
+        int $itemsPerPage = 20,
+        array $options = []
     ): ?array {
         $suffixes = array_values(array_unique(array_merge(
             array_map(fn ($suffix) => LocaleFields::suffix((string) $suffix), $localeSuffixes),
@@ -188,10 +216,135 @@ class SolrSearcher
         if ($exclude) {
             $filters[] = '-submission_id:(' . implode(' OR ', $exclude) . ')';
         }
+        foreach ($options['filters'] ?? [] as $name => $value) {
+            if (isset(self::FACET_FIELDS[$name]) && (int) $value > 0) {
+                // Tagged, so the facet still lists the other values of this field.
+                $filters[] = '{!tag=f' . $name . '}' . self::FACET_FIELDS[$name] . ':' . (int) $value;
+            }
+        }
         if ($filters) {
             $params['fq'] = $filters;
         }
+        if (!empty($options['highlight'])) {
+            $params += $this->highlightParams();
+        }
+        if (!empty($options['facets'])) {
+            $params += $this->facetParams();
+        }
         return $params;
+    }
+
+    /**
+     * Unified highlighter: one snippet per field, words marked with control
+     * characters (escaped and turned into <mark> in parseHighlights()).
+     */
+    private function highlightParams(): array
+    {
+        $fields = array_map(fn ($name) => $name . '_*', self::SNIPPET_METADATA_FIELDS);
+        $fields[] = self::FULL_TEXT_FIELD . '_ft_*';
+        return [
+            'hl' => 'true',
+            'hl.method' => 'unified',
+            'hl.fl' => implode(',', $fields),
+            'hl.snippets' => 1,
+            'hl.fragsize' => 200,
+            // Break at words: book text often has long runs without full stops.
+            'hl.bs.type' => 'WORD',
+            'hl.requireFieldMatch' => 'false',
+            'hl.defaultSummary' => 'false',
+            // Look through the whole book, not only the first 51 200 characters
+            // (Solr's default). Offsets are in the index, so this stays fast.
+            'hl.maxAnalyzedChars' => FullTextProvider::MAX_BOOK_CHARS,
+            'hl.tag.pre' => self::MARK_START,
+            'hl.tag.post' => self::MARK_END,
+        ];
+    }
+
+    private function facetParams(): array
+    {
+        $params = [
+            'facet' => 'true',
+            'facet.mincount' => 1,
+            'facet.limit' => 30,
+            'facet.field' => [],
+            'f.year.facet.sort' => 'index',
+            'f.year.facet.limit' => 200,
+        ];
+        foreach (self::FACET_FIELDS as $name => $field) {
+            $params['facet.field'][] = '{!ex=f' . $name . '}' . $field;
+        }
+        return $params;
+    }
+
+    /**
+     * @return array<int, array<int, array{type: string, html: string}>> Snippets by submission id:
+     *  at most one from metadata and one from the full text. "html" is escaped
+     *  text in which only <mark> elements are markup.
+     */
+    public function parseHighlights(array $highlighting): array
+    {
+        $result = [];
+        foreach ($highlighting as $id => $fields) {
+            $metadata = $fullText = null;
+            foreach (self::SNIPPET_METADATA_FIELDS as $name) {
+                foreach ($fields as $field => $snippets) {
+                    if ($metadata === null && preg_match('/^' . $name . '_(?!ft_)[A-Za-z_]+$/', $field) && !empty($snippets[0])) {
+                        $metadata = $snippets[0];
+                    }
+                }
+            }
+            foreach ($fields as $field => $snippets) {
+                if ($fullText === null && str_starts_with($field, self::FULL_TEXT_FIELD . '_ft_') && !empty($snippets[0])) {
+                    $fullText = $snippets[0];
+                }
+            }
+            $list = [];
+            if ($metadata !== null) {
+                $list[] = ['type' => 'metadata', 'html' => $this->snippetHtml($metadata)];
+            }
+            if ($fullText !== null) {
+                $list[] = ['type' => 'fulltext', 'html' => $this->snippetHtml($fullText)];
+            }
+            if ($list) {
+                $result[(int) $id] = $list;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Escape everything, then turn the highlight marks into <mark>. Marks are
+     * only kept in matching pairs, so the HTML is always well formed.
+     */
+    public function snippetHtml(string $snippet): string
+    {
+        $snippet = trim(preg_replace('/\s+/u', ' ', $snippet) ?? '');
+        // Keep long snippets short, around the first highlighted word.
+        if (mb_strlen($snippet) > self::MAX_SNIPPET_CHARS) {
+            $start = max(0, (int) mb_strpos($snippet, self::MARK_START) - 100);
+            $snippet = mb_substr($snippet, $start, self::MAX_SNIPPET_CHARS);
+        }
+        $html = htmlspecialchars($snippet, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $html = preg_replace('/' . self::MARK_START . '([^' . self::MARK_START . self::MARK_END . ']*)' . self::MARK_END . '/u', '<mark>$1</mark>', $html) ?? $html;
+        return str_replace([self::MARK_START, self::MARK_END], '', $html);
+    }
+
+    /**
+     * @return array<string, array<int, int>> Counts by facet (FACET_FIELDS key) and value
+     */
+    public function parseFacets(array $facetFields): array
+    {
+        $result = [];
+        foreach (self::FACET_FIELDS as $name => $field) {
+            $flat = $facetFields[$field] ?? [];
+            $result[$name] = [];
+            for ($i = 0; $i + 1 < count($flat); $i += 2) {
+                $result[$name][(int) $flat[$i]] = (int) $flat[$i + 1];
+            }
+        }
+        // Newest year first.
+        krsort($result['year']);
+        return $result;
     }
 
     private function isAllFields(int|string|null $type): bool
@@ -271,5 +424,61 @@ class SolrSearcher
         }
         $timestamp = strtotime($date . (strlen(trim($date)) === 10 ? ' 00:00:00 UTC' : ''));
         return $timestamp === false ? null : gmdate('Y-m-d\TH:i:s\Z', $timestamp);
+    }
+
+    /** Shortest input that gets suggestions, in characters */
+    public const SUGGEST_MIN_CHARS = 2;
+
+    /**
+     * Book titles for type-ahead: every word typed must begin a word of the
+     * title or an author name ("kong bø" finds "Kongernes bøger").
+     *
+     * @param string $locale UI locale; its title is preferred
+     *
+     * @return array<int, array{submissionId: int, pressId: int, title: string, authors: string[]}>
+     *
+     * @throws SolrException
+     */
+    public function suggest(string $input, ?int $pressId, string $locale, int $rows = 8): array
+    {
+        $input = $this->normalizeQuery($input);
+        // Only letters, digits and spaces: no query syntax at all.
+        $input = trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $input) ?? '');
+        if (mb_strlen($input) < self::SUGGEST_MIN_CHARS) {
+            return [];
+        }
+        $params = [
+            'q' => mb_substr($input, 0, 100),
+            'rows' => max(1, min(20, $rows)),
+            'sort' => 'score desc,date_published desc',
+        ];
+        if ($pressId) {
+            $params['fq'] = 'press_id:' . (int) $pressId;
+        }
+        $response = $this->solr->coreRequest('POST', 'suggest', [], ['params' => $params]);
+
+        $preferred = 'title_' . LocaleFields::suffix($locale);
+        $suggestions = [];
+        foreach ($response['response']['docs'] ?? [] as $doc) {
+            $title = $doc[$preferred][0] ?? null;
+            if ($title === null) {
+                foreach ($doc as $field => $values) {
+                    if (str_starts_with($field, 'title_') && !empty($values[0])) {
+                        $title = $values[0];
+                        break;
+                    }
+                }
+            }
+            if ($title === null) {
+                continue;
+            }
+            $suggestions[] = [
+                'submissionId' => (int) $doc['submission_id'],
+                'pressId' => (int) $doc['press_id'],
+                'title' => (string) $title,
+                'authors' => array_slice(array_map('strval', $doc['authors'] ?? []), 0, 3),
+            ];
+        }
+        return $suggestions;
     }
 }

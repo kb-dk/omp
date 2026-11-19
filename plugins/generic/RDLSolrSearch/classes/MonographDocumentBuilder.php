@@ -82,6 +82,7 @@ class MonographDocumentBuilder
         $datePublished = $this->toSolrDate($publication->getData('datePublished'));
         if ($datePublished) {
             $doc['date_published'] = $datePublished;
+            $doc['year'] = (int) substr($datePublished, 0, 4);
         }
 
         // Titles: prefix ("The", "A") is searchable but left out of the sort key.

@@ -15,6 +15,8 @@ core `omp`.
 - Phase 3: metadata indexing, removal on unpublish/delete, full rebuild.
 - Phase 4: OMP's search uses Solr, with OMP's own search as fallback.
 - Phase 5: full text of open-access book files.
+- Phase 6: snippets, facets, search suggestions, systemd service (and
+  pagination in RdlOMPTheme).
 
 ## Search
 
@@ -36,6 +38,30 @@ Solr:
   relevance.
 - Users cannot query fields directly (`authors:x`) or use Solr local
   parameters; odd syntax never causes an error page.
+
+### Snippets, facets and suggestions
+
+The search page (RdlOMPTheme `frontend/pages/search.tpl`) gets a template
+variable `rdlSolrSearch` from the plugin (see
+`RDLSolrSearchPlugin::getTemplateData()`):
+
+- **Snippets**: up to two per result, one from the description (abstract,
+  chapter abstracts/titles) and one from inside the book, with the search
+  words in `<mark>`. Snippets are escaped in PHP; `<mark>` is the only
+  markup. The whole book is searched for a snippet (term offsets are in
+  the index).
+- **Facets**: press (site-wide search only), series and publication year,
+  with counts. Request parameters `searchPress`, `searchSeries`,
+  `searchYear`; a facet keeps listing its other values while one is
+  selected. Facets with a single value are hidden.
+
+**Suggestions**: while typing in any search box (`input[name="query"]`),
+matching book titles (with authors) are listed; choosing one opens the
+book. Words match by their beginning ("kong bø" finds "Kongernes bøger"),
+æ/ø/å and accents are ignored. Within a press only its books are
+suggested. Endpoint: `index.php/<press|index>/rdlsolrsuggest?q=...`
+(JSON); script and style: `js/suggest.js`, `css/suggest.css`, added to
+public pages by the plugin.
 
 If Solr fails (down, timeout, error), the search falls back to OMP's own
 database search, the error is logged (prefix `RDLSolrSearch:`), and OMP's
@@ -85,8 +111,8 @@ include all proof files.
 Files missing from the files directory are skipped: background indexing
 logs each one, a rebuild prints one count at the end. Other types (e.g.
 Word) are skipped. At most 2 million characters per file
-and 5 million per book are indexed. Full text is searchable but not stored
-in Solr. A scanned PDF without a text layer adds no text.
+and 5 million per book are indexed. Full text is stored in Solr
+(compressed) so results can show snippets from inside the book. A scanned PDF without a text layer adds no text.
 
 Extracted text is cached gzipped in OMP's files directory under
 `rdlSolrSearch/fulltext/`, by file id. Stored files never change (a new
@@ -176,6 +202,12 @@ The script backs up the running config (keeps the last 5) and restores it
 if Solr rejects the new one. After a schema change, rebuild the index with
 `php tools/rebuildSearchIndex.php`.
 
+Some schema changes are incompatible with documents already in the index,
+e.g. storing or adding offsets to an existing field. Solr then rejects
+updates with "cannot change field ... index options". Deploy with
+`--reset-index` (empties the index; search finds nothing until the
+rebuild) and rebuild.
+
 ### Document fields
 
 One document per published monograph.
@@ -188,10 +220,12 @@ One document per published monograph.
 | `isbn`, `doi` | Identifiers, matched without hyphens and case-insensitively |
 | `authors`, `chapter_authors` | Names (not language specific) |
 | `<name>_<locale>` | Localized metadata, e.g. `title_da`, `abstract_en`, `chapter_title_da` |
-| `fulltext_ft_<locale>` | Full text of open-access book files (file locale, else the book's); searchable, not stored |
+| `fulltext_ft_<locale>` | Full text of open-access book files (file locale, else the book's); stored (compressed) with term offsets, for snippets |
 | `<name>_txt`, `<name>_ft_txt` | Metadata / full text in a locale without its own analyzer |
 | `title_sort` | Lowercased title (without prefix) for sorting |
 | `authors_sort` | First author, lowercased "family, given", for sorting |
+| `year` | Publication year, for the year facet |
+| `suggest` | Titles and authors (copyField), matched by word beginnings, for suggestions |
 
 Locale suffixes are OMP 3.4 locale codes (`da`, `en`, `fr_CA`, ...).
 Fields that match nothing in the schema are dropped silently.

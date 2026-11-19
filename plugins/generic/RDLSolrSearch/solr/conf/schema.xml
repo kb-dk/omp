@@ -8,7 +8,7 @@
 
   Field naming:
     <field>_<locale>     localized metadata, e.g. title_da, abstract_en
-    <field>_ft_<locale>  full text of book files, e.g. galley_ft_da
+    <field>_ft_<locale>  full text of book files, e.g. fulltext_ft_da (stored for highlighting)
     <field>_txt          text in a locale without its own analyzer
   Locale suffixes match OMP 3.4 locale codes (da, en, fr_CA, ...).
 
@@ -31,6 +31,8 @@
     <field name="work_type" type="pint" indexed="true" stored="true" docValues="true"/>
     <field name="date_published" type="pdate" indexed="true" stored="true" docValues="true"/>
     <field name="locale" type="string" indexed="true" stored="true"/>
+    <!-- Publication year, for the year facet. -->
+    <field name="year" type="pint" indexed="true" stored="true" docValues="true"/>
 
     <!-- Identifiers people search for verbatim. -->
     <field name="isbn" type="identifier" indexed="true" stored="true" multiValued="true"/>
@@ -45,6 +47,10 @@
     <field name="title_sort" type="string" indexed="true" stored="false" docValues="true"/>
     <!-- First author, "Family, Given". -->
     <field name="authors_sort" type="string" indexed="true" stored="false" docValues="true"/>
+
+    <!-- Search suggestions: titles and authors, matched by word beginnings
+         ("kong bø" finds "Kongernes bøger"). Filled by copyField below. -->
+    <field name="suggest" type="text_suggest" indexed="true" stored="false" multiValued="true"/>
 
     <dynamicField name="*_da" type="text_da" indexed="true" stored="true" multiValued="true"/>
     <dynamicField name="*_en" type="text_en" indexed="true" stored="true" multiValued="true"/>
@@ -68,30 +74,30 @@
     <dynamicField name="*_ro" type="text_ro" indexed="true" stored="true" multiValued="true"/>
     <dynamicField name="*_ru" type="text_ru" indexed="true" stored="true" multiValued="true"/>
     <dynamicField name="*_tr" type="text_tr" indexed="true" stored="true" multiValued="true"/>
-    <dynamicField name="*_ft_da" type="text_da" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_en" type="text_en" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_de" type="text_de" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_sv" type="text_sv" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_nb" type="text_no" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_nn" type="text_no" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_fr_FR" type="text_fr" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_fr_CA" type="text_fr" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_es" type="text_es" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_it" type="text_it" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_nl" type="text_nl" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_pt_BR" type="text_pt" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_pt_PT" type="text_pt" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_ca" type="text_ca" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_cs" type="text_cs" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_el" type="text_el" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_eu" type="text_eu" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_fa" type="text_fa" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_gl" type="text_gl" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_ro" type="text_ro" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_ru" type="text_ru" indexed="true" stored="false" multiValued="true"/>
-    <dynamicField name="*_ft_tr" type="text_tr" indexed="true" stored="false" multiValued="true"/>
+    <dynamicField name="*_ft_da" type="text_da" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_en" type="text_en" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_de" type="text_de" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_sv" type="text_sv" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_nb" type="text_no" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_nn" type="text_no" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_fr_FR" type="text_fr" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_fr_CA" type="text_fr" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_es" type="text_es" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_it" type="text_it" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_nl" type="text_nl" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_pt_BR" type="text_pt" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_pt_PT" type="text_pt" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_ca" type="text_ca" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_cs" type="text_cs" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_el" type="text_el" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_eu" type="text_eu" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_fa" type="text_fa" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_gl" type="text_gl" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_ro" type="text_ro" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_ru" type="text_ru" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
+    <dynamicField name="*_ft_tr" type="text_tr" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
     <dynamicField name="*_txt" type="text" indexed="true" stored="true" multiValued="true"/>
-    <dynamicField name="*_ft_txt" type="text" indexed="true" stored="false" multiValued="true"/>
+    <dynamicField name="*_ft_txt" type="text" indexed="true" stored="true" storeOffsetsWithPositions="true" multiValued="true"/>
     <dynamicField name="*_spell" type="text_spell" indexed="true" stored="false" multiValued="true"/>
 
     <!-- Drop anything else (e.g. a locale without a field definition) instead of failing the update. -->
@@ -110,6 +116,21 @@
         <filter class="solr.LowerCaseFilterFactory"/>
         <filter class="solr.PatternReplaceFilterFactory" pattern="-" replacement="" replace="all"/>
         <filter class="solr.LengthFilterFactory" min="1" max="255"/>
+      </analyzer>
+    </fieldType>
+    <!-- Word-beginning matching for suggestions: "bø" matches "bøger".
+         Folding (æ->ae, ø->o, é->e) on both sides, so "boger" also matches. -->
+    <fieldType name="text_suggest" class="solr.TextField" positionIncrementGap="100">
+      <analyzer type="index">
+        <tokenizer class="solr.StandardTokenizerFactory"/>
+        <filter class="solr.LowerCaseFilterFactory"/>
+        <filter class="solr.ASCIIFoldingFilterFactory"/>
+        <filter class="solr.EdgeNGramFilterFactory" minGramSize="1" maxGramSize="30" preserveOriginal="true"/>
+      </analyzer>
+      <analyzer type="query">
+        <tokenizer class="solr.StandardTokenizerFactory"/>
+        <filter class="solr.LowerCaseFilterFactory"/>
+        <filter class="solr.ASCIIFoldingFilterFactory"/>
       </analyzer>
     </fieldType>
     <fieldType name="pint" class="solr.IntPointField"/>
@@ -378,4 +399,6 @@
       </analyzer>
     </fieldType>
   </types>
+  <copyField source="title_*" dest="suggest"/>
+  <copyField source="authors" dest="suggest"/>
 </schema>

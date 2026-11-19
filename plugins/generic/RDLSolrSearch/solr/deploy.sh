@@ -134,6 +134,10 @@ if [ "$RESET_INDEX" = 1 ]; then
 	log "Deleting all documents in '$CORE'"
 	curl -sS --fail-with-body --max-time 120 -H 'Content-Type: application/json' \
 		-d '{"delete":{"query":"*:*"}}' "$SOLR_URL/$CORE/update?commit=true&wt=json" >/dev/null
+	# Reload again: the open index writer still remembers how existing fields
+	# were indexed (e.g. without offsets) and would reject the new settings.
+	core_admin "action=RELOAD&core=$CORE" >/dev/null || fail "Could not reload core '$CORE' after emptying it"
+	wait_for_core
 	log "Index is empty; rebuild it with: php tools/rebuildSearchIndex.php"
 fi
 

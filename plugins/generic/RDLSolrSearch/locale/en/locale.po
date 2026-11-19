@@ -52,3 +52,33 @@ msgstr "Timeout (seconds)"
 
 msgid "plugins.generic.rdlSolrSearch.settings.solrTimeout.invalid"
 msgstr "The timeout must be a whole number between 1 and 120."
+
+msgid "plugins.generic.rdlSolrSearch.facet.press"
+msgstr "Press"
+
+msgid "plugins.generic.rdlSolrSearch.facet.series"
+msgstr "Series"
+
+msgid "plugins.generic.rdlSolrSearch.facet.year"
+msgstr "Year published"
+
+msgid "plugins.generic.rdlSolrSearch.facets.title"
+msgstr "Narrow results"
+
+msgid "plugins.generic.rdlSolrSearch.facets.active"
+msgstr "Active filters"
+
+msgid "plugins.generic.rdlSolrSearch.facets.remove"
+msgstr "Remove filter: {$filter}"
+
+msgid "plugins.generic.rdlSolrSearch.facets.count"
+msgstr "{$count} titles"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.fulltext"
+msgstr "In the book"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.metadata"
+msgstr "In the description"
+
+msgid "plugins.generic.rdlSolrSearch.suggest.label"
+msgstr "Suggestions"

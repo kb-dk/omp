@@ -52,3 +52,33 @@ msgstr "Timeout (sekunder)"
 
 msgid "plugins.generic.rdlSolrSearch.settings.solrTimeout.invalid"
 msgstr "Timeout skal være et helt tal mellem 1 og 120."
+
+msgid "plugins.generic.rdlSolrSearch.facet.press"
+msgstr "Forlag"
+
+msgid "plugins.generic.rdlSolrSearch.facet.series"
+msgstr "Serie"
+
+msgid "plugins.generic.rdlSolrSearch.facet.year"
+msgstr "Udgivelsesår"
+
+msgid "plugins.generic.rdlSolrSearch.facets.title"
+msgstr "Afgræns resultater"
+
+msgid "plugins.generic.rdlSolrSearch.facets.active"
+msgstr "Valgte filtre"
+
+msgid "plugins.generic.rdlSolrSearch.facets.remove"
+msgstr "Fjern filter: {$filter}"
+
+msgid "plugins.generic.rdlSolrSearch.facets.count"
+msgstr "{$count} titler"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.fulltext"
+msgstr "I bogen"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.metadata"
+msgstr "I beskrivelsen"
+
+msgid "plugins.generic.rdlSolrSearch.suggest.label"
+msgstr "Forslag"

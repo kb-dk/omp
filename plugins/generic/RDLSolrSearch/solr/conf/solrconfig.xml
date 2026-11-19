@@ -12,7 +12,10 @@
 
   <dataDir>${solr.data.dir:}</dataDir>
   <directoryFactory name="DirectoryFactory" class="${solr.directoryFactory:solr.NRTCachingDirectoryFactory}"/>
-  <codecFactory class="solr.SchemaCodecFactory"/>
+  <!-- Stored full text is large; compress it harder (slightly slower to read). -->
+  <codecFactory class="solr.SchemaCodecFactory">
+    <str name="compressionMode">BEST_COMPRESSION</str>
+  </codecFactory>
 
   <!-- Use schema.xml as-is; never let Solr change the schema on its own. -->
   <schemaFactory class="ClassicIndexSchemaFactory"/>
@@ -68,6 +71,24 @@
       <!-- Users cannot query arbitrary fields with "field:value"; only qf is searched. -->
       <str name="uf">-*</str>
       <str name="fl">id,submission_id,press_id,score</str>
+    </lst>
+  </requestHandler>
+
+  <!-- Search suggestions (type-ahead): book titles matching the words typed
+     so far. Locked down like /search; the plugin adds the press filter. -->
+  <requestHandler name="/suggest" class="solr.SearchHandler">
+    <lst name="defaults">
+      <str name="echoParams">none</str>
+      <int name="rows">8</int>
+      <str name="q.op">AND</str>
+    </lst>
+    <lst name="invariants">
+      <str name="defType">edismax</str>
+      <str name="uf">-*</str>
+      <str name="qf">suggest</str>
+      <str name="fl">id,submission_id,press_id,title_*,authors</str>
+      <str name="hl">false</str>
+      <str name="facet">false</str>
     </lst>
   </requestHandler>
 
