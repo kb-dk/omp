@@ -147,7 +147,19 @@ Server settings and install steps: `solr/solr.in.sh.example`.
 | Solr home, index, logs | `/home/omp/solr-data` |
 | Core | `omp` |
 
-Start/stop: `/home/omp/solr/bin/solr start` / `stop`.
+Run Solr as a system service, so it starts at boot and restarts after a
+crash. `solr/solr-omp.service` runs it as user `omp` with the file limits
+Solr recommends:
+
+```sh
+sudo cp plugins/generic/RDLSolrSearch/solr/solr-omp.service /etc/systemd/system/
+/home/omp/solr/bin/solr stop -p 8983   # if it was started by hand
+sudo systemctl daemon-reload
+sudo systemctl enable --now solr-omp
+systemctl status solr-omp
+```
+
+Without the service: `/home/omp/solr/bin/solr start` / `stop`.
 
 ## Solr configuration
 

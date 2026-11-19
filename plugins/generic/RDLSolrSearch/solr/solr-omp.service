@@ -1,0 +1,35 @@
+# systemd unit for the standalone Solr used by the RDLSolrSearch plugin.
+#
+# Install (adjust User and paths to the server):
+#   sudo cp plugins/generic/RDLSolrSearch/solr/solr-omp.service /etc/systemd/system/
+#   /home/omp/solr/bin/solr stop -p 8983      # stop a Solr started by hand
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now solr-omp
+#
+# Status and logs:
+#   systemctl status solr-omp
+#   journalctl -u solr-omp            (start-up output)
+#   /home/omp/solr-data/logs/solr.log (Solr's own log)
+
+[Unit]
+Description=Apache Solr for OMP search (RDLSolrSearch)
+After=network.target
+
+[Service]
+Type=simple
+User=omp
+Group=omp
+# Settings (port, Solr home, heap, localhost only) come from solr.in.sh.
+Environment=SOLR_INCLUDE=/home/omp/solr/bin/solr.in.sh
+# -f: run in the foreground so systemd supervises the Java process itself.
+ExecStart=/home/omp/solr/bin/solr start -f
+# Solr shuts down cleanly on SIGTERM; give it time to close the index.
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10
+# Limits recommended by Solr (avoids the ulimit warnings at start-up).
+LimitNOFILE=65000
+LimitNPROC=65000
+
+[Install]
+WantedBy=multi-user.target
