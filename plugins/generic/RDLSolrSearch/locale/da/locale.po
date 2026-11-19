@@ -80,5 +80,11 @@ msgstr "I bogen"
 msgid "plugins.generic.rdlSolrSearch.snippet.metadata"
 msgstr "I beskrivelsen"
 
+msgid "plugins.generic.rdlSolrSearch.snippet.authors"
+msgstr "Forfatter"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.chapterAuthors"
+msgstr "Kapitelforfatter"
+
 msgid "plugins.generic.rdlSolrSearch.suggest.label"
 msgstr "Forslag"

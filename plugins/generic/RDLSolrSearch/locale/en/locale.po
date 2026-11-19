@@ -80,5 +80,11 @@ msgstr "In the book"
 msgid "plugins.generic.rdlSolrSearch.snippet.metadata"
 msgstr "In the description"
 
+msgid "plugins.generic.rdlSolrSearch.snippet.authors"
+msgstr "Author"
+
+msgid "plugins.generic.rdlSolrSearch.snippet.chapterAuthors"
+msgstr "Chapter author"
+
 msgid "plugins.generic.rdlSolrSearch.suggest.label"
 msgstr "Suggestions"

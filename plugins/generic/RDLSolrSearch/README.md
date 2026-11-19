@@ -50,6 +50,11 @@ variable `rdlSolrSearch` from the plugin (see
   words in `<mark>`. Snippets are escaped in PHP; `<mark>` is the only
   markup. The whole book is searched for a snippet (term offsets are in
   the index).
+- **Author matches**: when the search words match an author name, the
+  theme marks them in the result's author line (a regex from the plugin,
+  applied to the escaped line). If no shown name matched, e.g. a chapter
+  author or an author hidden behind "et al.", the matching names are
+  shown as an extra snippet.
 - **Facets**: press (site-wide search only), series and publication year,
   with counts. Request parameters `searchPress`, `searchSeries`,
   `searchYear`; a facet keeps listing its other values while one is

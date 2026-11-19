@@ -92,6 +92,12 @@ class SolrSearcher
     /** Snippet sources, in order of preference. Metadata first, then full text. */
     private const SNIPPET_METADATA_FIELDS = ['abstract', 'chapter_abstract', 'chapter_title'];
 
+    /** Author fields highlighted, so a result can show which author matched. */
+    private const AUTHOR_FIELDS = ['authors', 'chapter_authors'];
+
+    /** Most matching author names shown in an author snippet */
+    private const MAX_AUTHOR_NAMES = 3;
+
     /** Longest snippet shown, in characters */
     public const MAX_SNIPPET_CHARS = 300;
 
@@ -130,7 +136,7 @@ class SolrSearcher
     ): array {
         $params = $this->buildParams($keywords, $pressId, $localeSuffixes, $publishedFrom, $publishedTo, $orderBy, $orderDir, $exclude, $page, $itemsPerPage, $options);
         if ($params === null) {
-            return ['ids' => [], 'total' => 0, 'highlights' => [], 'facets' => []];
+            return ['ids' => [], 'total' => 0, 'highlights' => [], 'authorHighlights' => [], 'facets' => []];
         }
         $response = $this->solr->coreRequest('POST', 'search', [], ['params' => $params]);
         $ids = [];
@@ -141,6 +147,7 @@ class SolrSearcher
             'ids' => $ids,
             'total' => (int) ($response['response']['numFound'] ?? 0),
             'highlights' => $this->parseHighlights($response['highlighting'] ?? []),
+            'authorHighlights' => $this->parseAuthorHighlights($response['highlighting'] ?? []),
             'facets' => $this->parseFacets($response['facet_counts']['facet_fields'] ?? []),
         ];
     }
@@ -242,7 +249,8 @@ class SolrSearcher
     {
         $fields = array_map(fn ($name) => $name . '_*', self::SNIPPET_METADATA_FIELDS);
         $fields[] = self::FULL_TEXT_FIELD . '_ft_*';
-        return [
+        $fields = array_merge($fields, self::AUTHOR_FIELDS);
+        $params = [
             'hl' => 'true',
             'hl.method' => 'unified',
             'hl.fl' => implode(',', $fields),
@@ -258,6 +266,12 @@ class SolrSearcher
             'hl.tag.pre' => self::MARK_START,
             'hl.tag.post' => self::MARK_END,
         ];
+        foreach (self::AUTHOR_FIELDS as $field) {
+            // One snippet per matching name (each value of the field is whole).
+            $params['f.' . $field . '.hl.bs.type'] = 'WHOLE';
+            $params['f.' . $field . '.hl.snippets'] = 20;
+        }
+        return $params;
     }
 
     private function facetParams(): array
@@ -310,6 +324,63 @@ class SolrSearcher
             }
         }
         return $result;
+    }
+
+    /**
+     * Matches in author names. The theme marks the words in the author line
+     * it already shows, and falls back to "html" when no shown name matched
+     * (e.g. a chapter author, or an author hidden behind "et al.").
+     *
+     * @return array<int, array{pattern: string, type: string, html: string}> By submission id:
+     *  pattern: regex (with one group) for the matched words in HTML-escaped text;
+     *  type: authors|chapterAuthors, the field "html" comes from;
+     *  html: matching names, escaped, with <mark> around the matched words
+     */
+    public function parseAuthorHighlights(array $highlighting): array
+    {
+        $result = [];
+        foreach ($highlighting as $id => $fields) {
+            $terms = [];
+            $names = [];
+            foreach (self::AUTHOR_FIELDS as $field) {
+                foreach ((array) ($fields[$field] ?? []) as $name) {
+                    if (preg_match_all('/' . self::MARK_START . '([^' . self::MARK_START . self::MARK_END . ']+)' . self::MARK_END . '/u', (string) $name, $matches)) {
+                        foreach ($matches[1] as $term) {
+                            $terms[mb_strtolower($term)] = $term;
+                        }
+                        $names[$field][] = $name;
+                    }
+                }
+            }
+            if (!$terms) {
+                continue;
+            }
+            $field = isset($names['authors']) ? 'authors' : 'chapter_authors';
+            $html = array_map([$this, 'snippetHtml'], array_slice(array_unique($names[$field]), 0, self::MAX_AUTHOR_NAMES));
+            $result[(int) $id] = [
+                'pattern' => $this->markPattern(array_values($terms)),
+                'type' => $field === 'authors' ? 'authors' : 'chapterAuthors',
+                'html' => implode('; ', $html),
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * Case-insensitive regex for whole words in HTML-escaped text, e.g. for
+     * Smarty's regex_replace: {$text|escape|regex_replace:$pattern:'<mark>$1</mark>'}.
+     * Words are escaped the same way, and a match never starts inside an
+     * entity (&amp;, &#039;).
+     *
+     * @param string[] $terms
+     */
+    public function markPattern(array $terms): string
+    {
+        $terms = array_map(fn ($term) => htmlspecialchars($term, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), $terms);
+        // Longest first, so "Hansen" wins over "Han".
+        usort($terms, fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
+        $alternatives = implode('|', array_map(fn ($term) => preg_quote($term, '/'), $terms));
+        return '/(?<![\\p{L}\\p{N}&#])(' . $alternatives . ')(?![\\p{L}\\p{N}])/iu';
     }
 
     /**

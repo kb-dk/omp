@@ -336,6 +336,7 @@ class RDLSolrSearchPlugin extends GenericPlugin
     /**
      * Data for the search page:
      *  highlights:    [submission id => [['type' => metadata|fulltext, 'html' => escaped HTML with <mark>]]]
+     *  authorHighlights: [submission id => ['pattern', 'type', 'html']] (see SolrSearcher::parseAuthorHighlights())
      *  facets:        [['name', 'title', 'values' => [['label', 'count', 'active', 'params']]]]
      *  activeFilters: [['title', 'label', 'removeParams']]
      *  filterParams:  request parameters of the active filters (for pagination links)
@@ -383,6 +384,7 @@ class RDLSolrSearchPlugin extends GenericPlugin
         }
         return [
             'highlights' => $found['highlights'] ?? [],
+            'authorHighlights' => $found['authorHighlights'] ?? [],
             'facets' => $facets,
             'activeFilters' => $activeFilters,
             'filterParams' => $filterParams,
