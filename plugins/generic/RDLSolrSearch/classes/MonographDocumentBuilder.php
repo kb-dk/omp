@@ -101,7 +101,7 @@ class MonographDocumentBuilder
             $doc['title_sort'] = mb_strtolower($sortTitle);
         }
 
-        $this->addAuthors($doc, $publication);
+        $this->addAuthors($doc, $publication, $locale);
         $this->addSeries($doc, $publication);
         $this->addChapters($doc, $publication);
         $this->addIdentifiers($doc, $publication);
@@ -109,9 +109,16 @@ class MonographDocumentBuilder
         return $doc;
     }
 
-    private function addAuthors(array &$doc, Publication $publication): void
+    private function addAuthors(array &$doc, Publication $publication, string $locale): void
     {
         foreach ($publication->getData('authors') ?? [] as $author) {
+            if (!isset($doc['authors_sort'])) {
+                // Sort key: first author (in the list's order), "family, given".
+                $sortName = $this->clean($author->getFullName(false, true, $locale));
+                if ($sortName !== '') {
+                    $doc['authors_sort'] = mb_strtolower($sortName);
+                }
+            }
             foreach ($this->authorNames($author) as $name) {
                 $doc['authors'][] = $name;
                 $doc['authors_facet'][] = $name;

@@ -62,6 +62,9 @@
     </lst>
     <lst name="invariants">
       <str name="defType">edismax</str>
+      <!-- Analyze the whole query per field: each language applies its own
+           stopwords, and words may match in different fields. -->
+      <str name="sow">false</str>
       <!-- Users cannot query arbitrary fields with "field:value"; only qf is searched. -->
       <str name="uf">-*</str>
       <str name="fl">id,submission_id,press_id,score</str>

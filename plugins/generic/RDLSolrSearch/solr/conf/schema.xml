@@ -33,8 +33,8 @@
     <field name="locale" type="string" indexed="true" stored="true"/>
 
     <!-- Identifiers people search for verbatim. -->
-    <field name="isbn" type="string_ci" indexed="true" stored="true" multiValued="true"/>
-    <field name="doi" type="string_ci" indexed="true" stored="true" multiValued="true"/>
+    <field name="isbn" type="identifier" indexed="true" stored="true" multiValued="true"/>
+    <field name="doi" type="identifier" indexed="true" stored="true" multiValued="true"/>
 
     <!-- Names are not language specific. -->
     <field name="authors" type="text" indexed="true" stored="true" multiValued="true"/>
@@ -43,6 +43,8 @@
 
     <!-- Sorting. The plugin lowercases the value before indexing. -->
     <field name="title_sort" type="string" indexed="true" stored="false" docValues="true"/>
+    <!-- First author, "Family, Given". -->
+    <field name="authors_sort" type="string" indexed="true" stored="false" docValues="true"/>
 
     <dynamicField name="*_da" type="text_da" indexed="true" stored="true" multiValued="true"/>
     <dynamicField name="*_en" type="text_en" indexed="true" stored="true" multiValued="true"/>
@@ -98,11 +100,16 @@
 
   <types>
     <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
-    <fieldType name="string_ci" class="solr.TextField" sortMissingLast="true" omitNorms="true">
+    <!-- ISBN/DOI: one token per whitespace-separated word, lowercased, hyphens
+         removed (978-87-... = 97887...). Splitting on whitespace like the text
+         fields keeps edismax matching word by word across all fields, so an
+         identifier field does not stop "author + title word" queries matching. -->
+    <fieldType name="identifier" class="solr.TextField" omitNorms="true">
       <analyzer>
-        <tokenizer class="solr.KeywordTokenizerFactory"/>
+        <tokenizer class="solr.WhitespaceTokenizerFactory"/>
         <filter class="solr.LowerCaseFilterFactory"/>
-        <filter class="solr.PatternReplaceFilterFactory" pattern="[\s-]" replacement="" replace="all"/>
+        <filter class="solr.PatternReplaceFilterFactory" pattern="-" replacement="" replace="all"/>
+        <filter class="solr.LengthFilterFactory" min="1" max="255"/>
       </analyzer>
     </fieldType>
     <fieldType name="pint" class="solr.IntPointField"/>

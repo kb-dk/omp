@@ -13,8 +13,36 @@ core `omp`.
   connection test.
 - Phase 2: OMP schema and Solr config (`solr/conf/`) and a deploy script.
 - Phase 3: metadata indexing, removal on unpublish/delete, full rebuild.
+- Phase 4: OMP's search uses Solr, with OMP's own search as fallback.
 
-Search is not wired up yet, so OMP's own search is still used.
+## Search
+
+The plugin answers OMP's search (`SubmissionSearch::retrieveResults`) from
+Solr:
+
+- All words must match, but they may match in different fields, e.g. an
+  author's name plus a word from the title.
+- Each language's fields use their own stemming and stopwords (Danish
+  "historier" finds "historie"; "og" never blocks a match).
+- Searched: titles, subtitles, keywords, subjects, disciplines, chapter
+  titles/subtitles/abstracts, series titles, abstracts, coverage, type,
+  affiliations, authors and chapter authors, ISBN and DOI (with or without
+  hyphens), and full text (phase 5). Title matches count most.
+- Locales searched: those of the press (site-wide: of all enabled presses).
+- A press's search only finds that press's monographs.
+- Sorting by relevance, title, first author, publication date and press
+  works. Popularity sorting is not available in Solr and falls back to
+  relevance.
+- Users cannot query fields directly (`authors:x`) or use Solr local
+  parameters; odd syntax never causes an error page.
+
+If Solr fails (down, timeout, error), the search falls back to OMP's own
+database search, the error is logged (prefix `RDLSolrSearch:`), and OMP's
+search is used for the next 60 seconds, so visitors don't wait for a hanging
+Solr on every search.
+
+Note: the RdlOMPTheme search page shows only the first page of results
+(20); it has no pagination links.
 
 ## Indexing
 
@@ -105,19 +133,23 @@ One document per published monograph.
 | `id` | Submission id (string, unique key) |
 | `submission_id`, `publication_id`, `press_id`, `series_id` | Ids for filtering |
 | `work_type`, `date_published`, `locale` | Monograph data |
-| `isbn`, `doi` | Identifiers, matched without hyphens/spaces and case-insensitively |
+| `isbn`, `doi` | Identifiers, matched without hyphens and case-insensitively |
 | `authors`, `chapter_authors` | Names (not language specific) |
 | `<name>_<locale>` | Localized metadata, e.g. `title_da`, `abstract_en`, `chapter_title_da` |
 | `<name>_ft_<locale>` | Full text of book files; searchable, not stored |
 | `<name>_txt`, `<name>_ft_txt` | Metadata / full text in a locale without its own analyzer |
-| `title_sort` | Lowercased title for sorting |
+| `title_sort` | Lowercased title (without prefix) for sorting |
+| `authors_sort` | First author, lowercased "family, given", for sorting |
 
 Locale suffixes are OMP 3.4 locale codes (`da`, `en`, `fr_CA`, ...).
 Fields that match nothing in the schema are dropped silently.
 
 The `/search` handler uses edismax with all words required (`q.op=AND`),
 returns only ids and score, and does not let users query fields directly
-(`uf=-*`); the plugin chooses the searched fields with `qf`.
+(`uf=-*`); the plugin chooses the searched fields with `qf`. Keep Solr's
+default `sow=false`: it lets each language field apply its own stopwords.
+All fields in `qf` must split the query on whitespace (as `isbn`/`doi` do),
+otherwise edismax stops matching words across different fields.
 
 Language analyzers come from the PKP Lucene plugin. The Danish and
 English ones were rewritten to stem before folding æ/ø/å and accents.

@@ -24,6 +24,9 @@ use APP\plugins\generic\RDLSolrSearch\classes\MonographDocumentBuilder;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrClient;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrException;
 use APP\plugins\generic\RDLSolrSearch\classes\SolrIndexer;
+use APP\plugins\generic\RDLSolrSearch\classes\SolrSearcher;
+use Illuminate\Support\Facades\Cache;
+use PKP\context\Context;
 use PKP\core\JSONMessage;
 use PKP\linkAction\LinkAction;
 use PKP\linkAction\request\AjaxModal;
@@ -36,6 +39,10 @@ class RDLSolrSearchPlugin extends GenericPlugin
     public const DEFAULT_SOLR_URL = 'http://127.0.0.1:8983/solr';
     public const DEFAULT_SOLR_CORE = 'omp';
     public const DEFAULT_SOLR_TIMEOUT = 10;
+
+    /** After a failed search, use OMP's own search for this many seconds. */
+    public const SEARCH_BACKOFF_SECONDS = 60;
+    private const SEARCH_BACKOFF_KEY = 'rdlSolrSearch.searchUnavailable';
 
     private ?SolrClient $solrClient = null;
 
@@ -58,6 +65,9 @@ class RDLSolrSearchPlugin extends GenericPlugin
             Hook::add('Publication::unpublish', [$this, 'callbackUnpublish']);
             Hook::add('Submission::delete', [$this, 'callbackSubmissionDeleted']);
             Hook::add('MonographSearchIndex::rebuildIndex', [$this, 'callbackRebuildIndex']);
+
+            // Searching. Falls back to OMP's own search if Solr fails.
+            Hook::add('SubmissionSearch::retrieveResults', [$this, 'callbackRetrieveResults']);
         }
         return $success;
     }
@@ -146,6 +156,93 @@ class RDLSolrSearchPlugin extends GenericPlugin
         }
         $echo('Rebuilding OMP\'s own search index');
         return Hook::CONTINUE;
+    }
+
+    /**
+     * Answer an OMP search from Solr.
+     *
+     * Returns ABORT with the results filled in, or CONTINUE (results
+     * untouched) so OMP's own database search runs, e.g. when Solr is down.
+     *
+     * @param array $args [&$context, &$keywords, $publishedFrom, $publishedTo, $orderBy,
+     *  $orderDir, $exclude, $page, $itemsPerPage, &$totalResults, &$error, &$results]
+     */
+    public function callbackRetrieveResults(string $hookName, array $args): bool
+    {
+        [$context, $keywords, $publishedFrom, $publishedTo, $orderBy, $orderDir, $exclude, $page, $itemsPerPage] = $args;
+        if ($this->isSearchBackingOff()) {
+            return Hook::CONTINUE;
+        }
+        try {
+            $found = $this->getSearcher()->search(
+                (array) $keywords,
+                $context ? (int) $context->getId() : null,
+                $this->getSearchLocales($context),
+                $publishedFrom,
+                $publishedTo,
+                (string) $orderBy,
+                (string) $orderDir,
+                (array) $exclude,
+                (int) $page,
+                (int) $itemsPerPage
+            );
+        } catch (Throwable $e) {
+            error_log('RDLSolrSearch: search failed, using OMP\'s own search for ' . self::SEARCH_BACKOFF_SECONDS . ' seconds: ' . $e->getMessage()
+                . ($e instanceof SolrException ? '' : "\n" . $e->getTraceAsString()));
+            $this->startSearchBackoff();
+            return Hook::CONTINUE;
+        }
+        // The array holds references to the caller's variables.
+        $args[9] = $found['total'];
+        $args[11] = $found['ids'];
+        return Hook::ABORT;
+    }
+
+    public function getSearcher(): SolrSearcher
+    {
+        return new SolrSearcher($this->getSolrClient());
+    }
+
+    /**
+     * Locales whose fields are searched: those of the press, or of all
+     * enabled presses for a site-wide search.
+     *
+     * @return string[]
+     */
+    public function getSearchLocales(?Context $context): array
+    {
+        $contexts = $context
+            ? [$context]
+            : iterator_to_array(Application::getContextDAO()->getAll(true)->toIterator(), false);
+        $locales = [];
+        foreach ($contexts as $currentContext) {
+            $locales = array_merge(
+                $locales,
+                [(string) $currentContext->getPrimaryLocale()],
+                (array) $currentContext->getSupportedLocales(),
+                (array) $currentContext->getSupportedFormLocales(),
+                (array) $currentContext->getSupportedSubmissionLocales()
+            );
+        }
+        return array_values(array_unique(array_filter($locales, 'strlen')));
+    }
+
+    private function isSearchBackingOff(): bool
+    {
+        try {
+            return (bool) Cache::get(self::SEARCH_BACKOFF_KEY, false);
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
+    private function startSearchBackoff(): void
+    {
+        try {
+            Cache::put(self::SEARCH_BACKOFF_KEY, true, self::SEARCH_BACKOFF_SECONDS);
+        } catch (Throwable $e) {
+            // No cache: every search tries Solr again.
+        }
     }
 
     /**
