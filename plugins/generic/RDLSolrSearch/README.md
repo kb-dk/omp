@@ -55,6 +55,8 @@ variable `rdlSolrSearch` from the plugin (see
   applied to the escaped line). If no shown name matched, e.g. a chapter
   author or an author hidden behind "et al.", the matching names are
   shown as an extra snippet.
+- **Title matches**: the search words are marked in the result's title
+  the same way (tags and entities in the title HTML are skipped).
 - **Facets**: press (site-wide search only), series and publication year,
   with counts. Request parameters `searchPress`, `searchSeries`,
   `searchYear`; a facet keeps listing its other values while one is

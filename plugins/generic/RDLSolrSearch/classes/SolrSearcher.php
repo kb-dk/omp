@@ -95,6 +95,9 @@ class SolrSearcher
     /** Author fields highlighted, so a result can show which author matched. */
     private const AUTHOR_FIELDS = ['authors', 'chapter_authors'];
 
+    /** Title fields highlighted, so the theme can mark the words in the shown title. */
+    private const TITLE_FIELDS = ['title', 'subtitle'];
+
     /** Most matching author names shown in an author snippet */
     private const MAX_AUTHOR_NAMES = 3;
 
@@ -136,7 +139,7 @@ class SolrSearcher
     ): array {
         $params = $this->buildParams($keywords, $pressId, $localeSuffixes, $publishedFrom, $publishedTo, $orderBy, $orderDir, $exclude, $page, $itemsPerPage, $options);
         if ($params === null) {
-            return ['ids' => [], 'total' => 0, 'highlights' => [], 'authorHighlights' => [], 'facets' => []];
+            return ['ids' => [], 'total' => 0, 'highlights' => [], 'authorHighlights' => [], 'titleHighlights' => [], 'facets' => []];
         }
         $response = $this->solr->coreRequest('POST', 'search', [], ['params' => $params]);
         $ids = [];
@@ -148,6 +151,7 @@ class SolrSearcher
             'total' => (int) ($response['response']['numFound'] ?? 0),
             'highlights' => $this->parseHighlights($response['highlighting'] ?? []),
             'authorHighlights' => $this->parseAuthorHighlights($response['highlighting'] ?? []),
+            'titleHighlights' => $this->parseTitleHighlights($response['highlighting'] ?? []),
             'facets' => $this->parseFacets($response['facet_counts']['facet_fields'] ?? []),
         ];
     }
@@ -250,6 +254,9 @@ class SolrSearcher
         $fields = array_map(fn ($name) => $name . '_*', self::SNIPPET_METADATA_FIELDS);
         $fields[] = self::FULL_TEXT_FIELD . '_ft_*';
         $fields = array_merge($fields, self::AUTHOR_FIELDS);
+        foreach (self::TITLE_FIELDS as $name) {
+            $fields[] = $name . '_*';
+        }
         $params = [
             'hl' => 'true',
             'hl.method' => 'unified',
@@ -344,10 +351,7 @@ class SolrSearcher
             $names = [];
             foreach (self::AUTHOR_FIELDS as $field) {
                 foreach ((array) ($fields[$field] ?? []) as $name) {
-                    if (preg_match_all('/' . self::MARK_START . '([^' . self::MARK_START . self::MARK_END . ']+)' . self::MARK_END . '/u', (string) $name, $matches)) {
-                        foreach ($matches[1] as $term) {
-                            $terms[mb_strtolower($term)] = $term;
-                        }
+                    if ($this->addMarkedTerms($terms, (string) $name)) {
                         $names[$field][] = $name;
                     }
                 }
@@ -367,10 +371,53 @@ class SolrSearcher
     }
 
     /**
-     * Case-insensitive regex for whole words in HTML-escaped text, e.g. for
-     * Smarty's regex_replace: {$text|escape|regex_replace:$pattern:'<mark>$1</mark>'}.
-     * Words are escaped the same way, and a match never starts inside an
-     * entity (&amp;, &#039;).
+     * Matched words in the book's title and subtitle, for marking the title
+     * the theme shows (see markPattern()).
+     *
+     * @return array<int, string> Regex by submission id
+     */
+    public function parseTitleHighlights(array $highlighting): array
+    {
+        $result = [];
+        foreach ($highlighting as $id => $fields) {
+            $terms = [];
+            foreach ($fields as $field => $snippets) {
+                foreach (self::TITLE_FIELDS as $name) {
+                    if (preg_match('/^' . $name . '_(?!ft_)[A-Za-z_]+$/', (string) $field)) {
+                        foreach ((array) $snippets as $snippet) {
+                            $this->addMarkedTerms($terms, (string) $snippet);
+                        }
+                    }
+                }
+            }
+            if ($terms) {
+                $result[(int) $id] = $this->markPattern(array_values($terms));
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Add the words between highlight marks to $terms (keyed case-insensitively).
+     *
+     * @return bool Whether the text had any marked word
+     */
+    private function addMarkedTerms(array &$terms, string $text): bool
+    {
+        if (!preg_match_all('/' . self::MARK_START . '([^' . self::MARK_START . self::MARK_END . ']+)' . self::MARK_END . '/u', $text, $matches)) {
+            return false;
+        }
+        foreach ($matches[1] as $term) {
+            $terms[mb_strtolower($term)] = $term;
+        }
+        return true;
+    }
+
+    /**
+     * Case-insensitive regex for whole words in HTML, e.g. for Smarty's
+     * regex_replace: {$html|regex_replace:$pattern:'<mark>$1</mark>'}.
+     * Words are HTML-escaped the same way as {$text|escape}, and tags and
+     * entities (<i>, &amp;) are skipped, so the result stays well formed.
      *
      * @param string[] $terms
      */
@@ -380,7 +427,7 @@ class SolrSearcher
         // Longest first, so "Hansen" wins over "Han".
         usort($terms, fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
         $alternatives = implode('|', array_map(fn ($term) => preg_quote($term, '/'), $terms));
-        return '/(?<![\\p{L}\\p{N}&#])(' . $alternatives . ')(?![\\p{L}\\p{N}])/iu';
+        return '/(?:<[^>]*>|&#?\\w+;)(*SKIP)(*FAIL)|(?<![\\p{L}\\p{N}])(' . $alternatives . ')(?![\\p{L}\\p{N}])/iu';
     }
 
     /**
